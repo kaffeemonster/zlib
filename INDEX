@@ -28,6 +28,7 @@ msdos/          makefiles for MSDOS
 nintendods/     makefile for Nintendo DS
 old/            makefiles for various architectures and zlib documentation
                 files that have not yet been updated for zlib 1.2.x
+parisc/         files for the parisc platform
 ppc/            files for the ppc platform
 qnx/            makefiles for QNX
 sparc/          files for the sparc platform
