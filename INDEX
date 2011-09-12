@@ -59,6 +59,7 @@ inflate.c
 inflate.h
 inftrees.c
 inftrees.h
+slhash.c
 trees.c
 trees.h
 uncompr.c
