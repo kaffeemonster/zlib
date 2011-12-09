@@ -83,7 +83,7 @@ typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 struct internal_state;
 
 typedef struct z_stream_s {
-    Bytef    *next_in;  /* next input byte */
+    z_const Bytef *next_in;     /* next input byte */
     uInt     avail_in;  /* number of bytes available at next_in */
     uLong    total_in;  /* total number of input bytes read so far */
 
@@ -91,7 +91,7 @@ typedef struct z_stream_s {
     uInt     avail_out; /* remaining free space at next_out */
     uLong    total_out; /* total number of bytes output so far */
 
-    char     *msg;      /* last error message, NULL if no error */
+    z_const char *msg;  /* last error message, NULL if no error */
     struct internal_state FAR *state; /* not visible by applications */
 
     alloc_func zalloc;  /* used to allocate the internal state */
@@ -581,10 +581,15 @@ ZEXTERN int ZEXPORT deflateSetDictionary OF((z_streamp strm,
                                              uInt  dictLength));
 /*
      Initializes the compression dictionary from the given byte sequence
-   without producing any compressed output.  This function must be called
-   immediately after deflateInit, deflateInit2 or deflateReset, before any call
-   of deflate.  The compressor and decompressor must use exactly the same
-   dictionary (see inflateSetDictionary).
+   without producing any compressed output.  When using the zlib format, this
+   function must be called immediately after deflateInit, deflateInit2 or
+   deflateReset, and before any call of deflate.  When doing raw deflate, this
+   function must be called either before any call of deflate, or immediately
+   after the completion of a deflate block, i.e. after all input has been
+   consumed and all output has been delivered when using any of the flush
+   options Z_BLOCK, Z_PARTIAL_FLUSH, Z_SYNC_FLUSH, or Z_FULL_FLUSH.  The
+   compressor and decompressor must use exactly the same dictionary (see
+   inflateSetDictionary).
 
      The dictionary should consist of strings (byte sequences) that are likely
    to be encountered later in the data to be compressed, with the most commonly
@@ -611,8 +616,8 @@ ZEXTERN int ZEXPORT deflateSetDictionary OF((z_streamp strm,
      deflateSetDictionary returns Z_OK if success, or Z_STREAM_ERROR if a
    parameter is invalid (e.g.  dictionary being Z_NULL) or the stream state is
    inconsistent (for example if deflate has already been called for this stream
-   or if the compression method is bsort).  deflateSetDictionary does not
-   perform any compression: this will be done by deflate().
+   or if not at a block boundary for raw deflate).  deflateSetDictionary does
+   not perform any compression: this will be done by deflate().
 */
 
 ZEXTERN int ZEXPORT deflateCopy OF((z_streamp dest,
@@ -696,7 +701,7 @@ ZEXTERN uLong ZEXPORT deflateBound OF((z_streamp strm,
    be larger than the value returned by deflateBound() if flush options other
    than Z_FINISH or Z_NO_FLUSH are used.
 */
-    
+
 ZEXTERN int ZEXPORT deflatePending OF((z_streamp strm,
                                        unsigned *pending,
                                        int *bits));
@@ -706,7 +711,7 @@ ZEXTERN int ZEXPORT deflatePending OF((z_streamp strm,
    provided would be due to the available output space having being consumed.
    The number of bits of output not provided are between 0 and 7, where they
    await more bits to join them in order to fill out a full byte.
- 
+
      deflatePending returns Z_OK if success, or Z_STREAM_ERROR if the source
    stream state was inconsistent.
  */
@@ -810,10 +815,11 @@ ZEXTERN int ZEXPORT inflateSetDictionary OF((z_streamp strm,
    if that call returned Z_NEED_DICT.  The dictionary chosen by the compressor
    can be determined from the adler32 value returned by that call of inflate.
    The compressor and decompressor must use exactly the same dictionary (see
-   deflateSetDictionary).  For raw inflate, this function can be called
-   immediately after inflateInit2() or inflateReset() and before any call of
-   inflate() to set the dictionary.  The application must insure that the
-   dictionary that was used for compression is provided.
+   deflateSetDictionary).  For raw inflate, this function can be called at any
+   time to set the dictionary.  If the provided dictionary is smaller than the
+   window and there is already data in the window, then the provided dictionary
+   will amend what's there.  The application must insure that the dictionary
+   that was used for compression is provided.
 
      inflateSetDictionary returns Z_OK if success, Z_STREAM_ERROR if a
    parameter is invalid (e.g.  dictionary being Z_NULL) or the stream state is
@@ -1112,6 +1118,7 @@ ZEXTERN uLong ZEXPORT zlibCompileFlags OF((void));
      27-31: 0 (reserved)
  */
 
+#ifndef Z_SOLO
 
                         /* utility functions */
 
@@ -1173,9 +1180,10 @@ ZEXTERN int ZEXPORT uncompress OF((Bytef *dest,   uLongf *destLen,
 
      uncompress returns Z_OK if success, Z_MEM_ERROR if there was not
    enough memory, Z_BUF_ERROR if there was not enough room in the output
-   buffer, or Z_DATA_ERROR if the input data was corrupted or incomplete.
+   buffer, or Z_DATA_ERROR if the input data was corrupted or incomplete.  In
+   the case where there is not enough room, uncompress() will fill the output
+   buffer with the uncompressed data up to that point.
 */
-
 
                         /* gzip file access functions */
 
@@ -1186,7 +1194,7 @@ ZEXTERN int ZEXPORT uncompress OF((Bytef *dest,   uLongf *destLen,
    wrapper, documented in RFC 1952, wrapped around a deflate stream.
 */
 
-typedef voidp gzFile;       /* opaque gzip file descriptor */
+typedef struct gzFile_s *gzFile;    /* semi-opaque gzip file descriptor */
 
 /*
 ZEXTERN gzFile ZEXPORT gzopen OF((const char *path, const char *mode));
@@ -1196,13 +1204,25 @@ ZEXTERN gzFile ZEXPORT gzopen OF((const char *path, const char *mode));
    a strategy: 'f' for filtered data as in "wb6f", 'h' for Huffman-only
    compression as in "wb1h", 'R' for run-length encoding as in "wb1R", or 'F'
    for fixed code compression as in "wb9F".  (See the description of
-   deflateInit2 for more information about the strategy parameter.) Also "a"
-   can be used instead of "w" to request that the gzip stream that will be
-   written be appended to the file.  "+" will result in an error, since reading
-   and writing to the same gzip file is not supported.
+   deflateInit2 for more information about the strategy parameter.)  'T' will
+   request transparent writing or appending with no compression and not using
+   the gzip format.
+
+     "a" can be used instead of "w" to request that the gzip stream that will
+   be written be appended to the file.  "+" will result in an error, since
+   reading and writing to the same gzip file is not supported.
+
+     These functions, as well as gzip, will read and decode a sequence of gzip
+   streams in a file.  The append function of gzopen() can be used to create
+   such a file.  (Also see gzflush() for another way to do this.)  When
+   appending, gzopen does not test whether the file begins with a gzip stream,
+   nor does it look for the end of the gzip streams to begin appending.  gzopen
+   will simply append a gzip stream to the existing file.
 
      gzopen can be used to read a file which is not in gzip format; in this
-   case gzread will directly read from the file without decompression.
+   case gzread will directly read from the file without decompression.  When
+   reading, this will be detected automatically by looking for the magic two-
+   byte gzip header.
 
      gzopen returns NULL if the file could not be opened, if there was
    insufficient memory to allocate the gzFile state, or if an invalid mode was
@@ -1221,7 +1241,11 @@ ZEXTERN gzFile ZEXPORT gzdopen OF((int fd, const char *mode));
    descriptor fd, just like fclose(fdopen(fd, mode)) closes the file descriptor
    fd.  If you want to keep fd open, use fd = dup(fd_keep); gz = gzdopen(fd,
    mode);.  The duplicated descriptor should be saved to avoid a leak, since
-   gzdopen does not close fd if it fails.
+   gzdopen does not close fd if it fails.  If you are using fileno() to get the
+   file descriptor from a FILE *, then you will have to use dup() to avoid
+   double-close()ing the file descriptor.  Both gzclose() and fclose() will
+   close the associated file descriptor, so they need to have different file
+   descriptors.
 
      gzdopen returns NULL if there was insufficient memory to allocate the
    gzFile state, if an invalid mode was specified (an 'r', 'w', or 'a' was not
@@ -1259,14 +1283,14 @@ ZEXTERN int ZEXPORT gzsetparams OF((gzFile file, int level, int strategy));
 ZEXTERN int ZEXPORT gzread OF((gzFile file, voidp buf, unsigned len));
 /*
      Reads the given number of uncompressed bytes from the compressed file.  If
-   the input file was not in gzip format, gzread copies the given number of
-   bytes into the buffer.
+   the input file is not in gzip format, gzread copies the given number of
+   bytes into the buffer directly from the file.
 
      After reaching the end of a gzip stream in the input, gzread will continue
-   to read, looking for another gzip stream, or failing that, reading the rest
-   of the input file directly without decompression.  The entire input file
-   will be read if gzread is called until it returns less than the requested
-   len.
+   to read, looking for another gzip stream.  Any number of gzip streams may be
+   concatenated in the input file, and will all be decompressed by gzread().
+   If something other than a gzip stream is encountered after a gzip stream,
+   that remaining trailing garbage is ignored (and no error is returned).
 
      gzread returns the number of uncompressed bytes actually read, less than
    len for end of file, or -1 for error.
@@ -1280,7 +1304,7 @@ ZEXTERN int ZEXPORT gzwrite OF((gzFile file,
    error.
 */
 
-ZEXTERN int ZEXPORTVA gzprintf ON((gzFile file, const char *format, ...));
+ZEXTERN int ZEXPORTVA gzprintf Z_ARG((gzFile file, const char *format, ...));
 /*
      Converts, formats, and writes the arguments to the compressed file under
    control of the format string, as in fprintf.  gzprintf returns the number of
@@ -1322,10 +1346,13 @@ ZEXTERN int ZEXPORT gzputc OF((gzFile file, int c));
    returns the value that was written, or -1 in case of error.
 */
 
-ZEXTERN int ZEXPORT gzgetc OF((gzFile file));
 /*
+ZEXTERN int ZEXPORT gzgetc OF((gzFile file));
      Reads one byte from the compressed file.  gzgetc returns this byte or -1
-   in case of end of file or error.
+   in case of end of file or error.  This is implemented as a macro for speed.
+   As such, it does not do all of the checking the other functions do.  I.e.
+   it does not check to see if file is NULL, nor whether the structure file
+   points to has been clobbered or not.
 */
 
 ZEXTERN int ZEXPORT gzungetc OF((int c, gzFile file));
@@ -1421,9 +1448,7 @@ ZEXTERN int ZEXPORT gzeof OF((gzFile file));
 ZEXTERN int ZEXPORT gzdirect OF((gzFile file));
 /*
      Returns true (1) if file is being copied directly while reading, or false
-   (0) if file is a gzip stream being decompressed.  This state can change from
-   false to true while reading the input file if the end of a gzip stream is
-   reached, but is followed by data that is not another gzip stream.
+   (0) if file is a gzip stream being decompressed.
 
      If the input file is empty, gzdirect() will return true, since the input
    does not contain a gzip stream.
@@ -1432,6 +1457,13 @@ ZEXTERN int ZEXPORT gzdirect OF((gzFile file));
    cause buffers to be allocated to allow reading the file to determine if it
    is a gzip file.  Therefore if gzbuffer() is used, it should be called before
    gzdirect().
+
+     When writing, gzdirect() returns true (1) if transparent writing was
+   requested ("wT" for the gzopen() mode), or false (0) otherwise.  (Note:
+   gzdirect() is not needed when writing.  Transparent writing must be
+   explicitly requested, so the application already knows the answer.  When
+   linking statically, using gzdirect() will include all of the zlib code for
+   gzip file reading and decompression, which may not be desired.)
 */
 
 ZEXTERN int ZEXPORT    gzclose OF((gzFile file));
@@ -1443,7 +1475,7 @@ ZEXTERN int ZEXPORT    gzclose OF((gzFile file));
    must not be called more than once on the same allocation.
 
      gzclose will return Z_STREAM_ERROR if file is not valid, Z_ERRNO on a
-   file operation error, or Z_OK on success.
+   file operation error, Z_MEM_ERROR if out of memory, or Z_OK on success.
 */
 
 ZEXTERN int ZEXPORT gzclose_r OF((gzFile file));
@@ -1481,6 +1513,7 @@ ZEXTERN void ZEXPORT gzclearerr OF((gzFile file));
    file that is being written concurrently.
 */
 
+#endif /* !Z_SOLO */
 
                         /* checksum functions */
 
@@ -1583,6 +1616,24 @@ ZEXTERN int ZEXPORT inflateBackInit_ OF((z_streamp strm, int windowBits,
         inflateBackInit_((strm), (windowBits), (window), \
                       ZLIB_VERSION, (int)sizeof(z_stream))
 
+#ifndef Z_SOLO
+
+/* gzgetc() macro and its supporting function and exposed data structure.  Note
+ * that the real internal state is much larger than the exposed structure.
+ * This abbreviated structure exposes just enough for the gzgetc() macro.  The
+ * user should not mess with these exposed elements, since their names or
+ * behavior could change in the future, perhaps even capriciously.  They can
+ * only be used by the gzgetc() macro.  You have been warned.
+ */
+struct gzFile_s {
+    unsigned have;
+    unsigned char *next;
+    z_off64_t pos;
+};
+ZEXTERN int ZEXPORT gzgetc_ OF((gzFile file));
+#define gzgetc(g) \
+    ((g)->have ? ((g)->have--, (g)->pos++, *((g)->next)++) : gzgetc_(g))
+
 /* provide 64-bit offset functions if _LARGEFILE64_SOURCE defined, and/or
  * change the regular functions to 64 bits if _FILE_OFFSET_BITS is 64 (if
  * both are true, the application gets the *64 functions, and the regular
@@ -1631,6 +1682,13 @@ ZEXTERN int ZEXPORT inflateBackInit_ OF((z_streamp strm, int windowBits,
    ZEXTERN uLong ZEXPORT crc32_combine OF((uLong, uLong, z_off_t));
 #endif
 
+#else /* Z_SOLO */
+
+   ZEXTERN uLong ZEXPORT adler32_combine OF((uLong, uLong, z_off_t));
+   ZEXTERN uLong ZEXPORT crc32_combine OF((uLong, uLong, z_off_t));
+
+#endif /* !Z_SOLO */
+
 /* hack for buggy compilers */
 #if !defined(ZUTIL_H) && !defined(NO_DUMMY_DECL)
     struct internal_state {int dummy;};
@@ -1641,6 +1699,11 @@ ZEXTERN const char   * ZEXPORT zError           OF((int));
 ZEXTERN int            ZEXPORT inflateSyncPoint OF((z_streamp));
 ZEXTERN const uLongf * ZEXPORT get_crc_table    OF((void));
 ZEXTERN int            ZEXPORT inflateUndermine OF((z_streamp, int));
+ZEXTERN int            ZEXPORT inflateResetKeep OF((z_streamp));
+ZEXTERN int            ZEXPORT deflateResetKeep OF((z_streamp));
+#ifndef Z_SOLO
+  ZEXTERN unsigned long  ZEXPORT gzflags          OF((void));
+#endif
 
 #ifdef __cplusplus
 }

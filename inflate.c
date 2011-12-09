@@ -100,7 +100,7 @@ local int updatewindow OF((z_streamp strm, unsigned out));
 local unsigned syncsearch OF((unsigned FAR *have, unsigned char FAR *buf,
                               unsigned len));
 
-int ZEXPORT inflateReset(strm)
+int ZEXPORT inflateResetKeep(strm)
 z_streamp strm;
 {
     struct inflate_state FAR *state;
@@ -115,9 +115,6 @@ z_streamp strm;
     state->havedict = 0;
     state->dmax = 32768U;
     state->head = Z_NULL;
-    state->wsize = 0;
-    state->whave = 0;
-    state->wnext = 0;
     state->hold = 0;
     state->bits = 0;
     state->lencode = state->distcode = state->next = state->codes;
@@ -125,6 +122,19 @@ z_streamp strm;
     state->back = -1;
     Tracev((stderr, "inflate: reset\n"));
     return Z_OK;
+}
+
+int ZEXPORT inflateReset(strm)
+z_streamp strm;
+{
+    struct inflate_state FAR *state;
+
+    if (strm == Z_NULL || strm->state == Z_NULL) return Z_STREAM_ERROR;
+    state = (struct inflate_state FAR *)strm->state;
+    state->wsize = 0;
+    state->whave = 0;
+    state->wnext = 0;
+    return inflateResetKeep(strm);
 }
 
 int ZEXPORT inflateReset2(strm, windowBits)
@@ -180,10 +190,19 @@ int stream_size;
     if (strm == Z_NULL) return Z_STREAM_ERROR;
     strm->msg = Z_NULL;                 /* in case we return an error */
     if (strm->zalloc == (alloc_func)0) {
+#ifdef Z_SOLO
+        return Z_STREAM_ERROR;
+#else
         strm->zalloc = zcalloc;
         strm->opaque = (voidpf)0;
+#endif
     }
-    if (strm->zfree == (free_func)0) strm->zfree = zcfree;
+    if (strm->zfree == (free_func)0)
+#ifdef Z_SOLO
+        return Z_STREAM_ERROR;
+#else
+        strm->zfree = zcfree;
+#endif
     state = (struct inflate_state FAR *)
             ZALLOC(strm, 1, sizeof(struct inflate_state));
     if (state == Z_NULL) return Z_MEM_ERROR;
@@ -321,8 +340,8 @@ void makefixed()
     low = 0;
     for (;;) {
         if ((low % 7) == 0) printf("\n        ");
-        printf("{%u,%u,%d}", state.lencode[low].op, state.lencode[low].bits,
-               state.lencode[low].val);
+        printf("{%u,%u,%d}", (low & 127) == 99 ? 64 : state.lencode[low].op,
+               state.lencode[low].bits, state.lencode[low].val);
         if (++low == size) break;
         putchar(',');
     }
@@ -925,7 +944,6 @@ int flush;
                     PULLBYTE();
                 }
                 if (here.val < 16) {
-                    NEEDBITS(here.bits);
                     DROPBITS(here.bits);
                     state->lens[state->have++] = here.val;
                 }
@@ -1214,7 +1232,7 @@ int flush;
      */
   inf_leave:
     RESTORE();
-    if (state->wsize || (state->mode < CHECK && out != strm->avail_out))
+    if (state->wsize || (state->mode < BAD && out != strm->avail_out))
         if (updatewindow(strm, out)) {
             state->mode = MEM;
             return Z_MEM_ERROR;
@@ -1256,6 +1274,9 @@ uInt dictLength;
 {
     struct inflate_state FAR *state;
     unsigned long id;
+    unsigned char *next;
+    unsigned avail;
+    int ret;
 
     /* check state */
     if (strm == Z_NULL || strm->state == Z_NULL) return Z_STREAM_ERROR;
@@ -1271,20 +1292,18 @@ uInt dictLength;
             return Z_DATA_ERROR;
     }
 
-    /* copy dictionary to window */
-    if (updatewindow(strm, strm->avail_out)) {
+    /* copy dictionary to window using updatewindow(), which will amend the
+       existing dictionary if appropriate */
+    next = strm->next_out;
+    avail = strm->avail_out;
+    strm->next_out = (Bytef *)dictionary + dictLength;
+    strm->avail_out = 0;
+    ret = updatewindow(strm, dictLength);
+    strm->avail_out = avail;
+    strm->next_out = next;
+    if (ret) {
         state->mode = MEM;
         return Z_MEM_ERROR;
-    }
-    if (dictLength > state->wsize) {
-        zmemcpy(state->window, dictionary + dictLength - state->wsize,
-                state->wsize);
-        state->whave = state->wsize;
-    }
-    else {
-        zmemcpy(state->window + state->wsize - dictLength, dictionary,
-                dictLength);
-        state->whave = dictLength;
     }
     state->havedict = 1;
     Tracev((stderr, "inflate:   dictionary set\n"));
@@ -1433,8 +1452,8 @@ z_streamp source;
     }
 
     /* copy state */
-    zmemcpy(dest, source, sizeof(z_stream));
-    zmemcpy(copy, state, sizeof(struct inflate_state));
+    zmemcpy((voidpf)dest, (voidpf)source, sizeof(z_stream));
+    zmemcpy((voidpf)copy, (voidpf)state, sizeof(struct inflate_state));
     if (state->lencode >= state->codes &&
         state->lencode <= state->codes + ENOUGH - 1) {
         copy->lencode = copy->codes + (state->lencode - state->codes);

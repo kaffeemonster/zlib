@@ -30,7 +30,7 @@ else
     AR=${AR-"ar"}
     test -n "${CROSS_PREFIX}" && echo Using ${AR}
 fi
-AR_RC="${AR} rc"
+ARFLAGS=${ARFLAGS-"rc"}
 if "${CROSS_PREFIX}ranlib" --version >/dev/null 2>/dev/null || test $? -lt 126; then
     RANLIB=${RANLIB-"${CROSS_PREFIX}ranlib"}
     test -n "${CROSS_PREFIX}" && echo Using ${RANLIB}
@@ -54,11 +54,15 @@ includedir=${includedir-'${prefix}/include'}
 mandir=${mandir-'${prefix}/share/man'}
 shared_ext='.so'
 shared=1
+solo=0
+cover=0
 zprefix=0
 build64=0
 gcc=0
 old_cc="$CC"
 old_cflags="$CFLAGS"
+OBJC='$(OBJZ) $(OBJG)'
+PIC_OBJC='$(PIC_OBJZ) $(PIC_OBJG)'
 
 while test $# -ge 1
 do
@@ -81,6 +85,8 @@ case "$1" in
     -i* | --includedir) includedir="$2"; shift; shift ;;
     -s* | --shared | --enable-shared) shared=1; shift ;;
     -t | --static) shared=0; shift ;;
+    --solo) solo=1; shift ;;
+    --cover) cover=1; shift ;;
     -z* | --zprefix) zprefix=1; shift ;;
     -6* | --64) build64=1; shift ;;
     -a*=* | --archs=*) ARCHS=`echo $1 | sed 's/.*=//'`; shift ;;
@@ -155,7 +161,7 @@ if test "$gcc" -eq 1 && ($cc -c $cflags $test.c) 2>/dev/null; then
              SHAREDLIBM=libz.$VER1$shared_ext
              LDSHARED=${LDSHARED-"$cc -dynamiclib -install_name $libdir/$SHAREDLIBM -compatibility_version $VER1 -current_version $VER3"}
              AR="libtool"
-             AR_RC="${AR} -o" ;;
+             ARFLAGS="-o" ;;
   *)             LDSHARED=${LDSHARED-"$cc -shared"} ;;
   esac
 else
@@ -192,7 +198,8 @@ else
              CFLAGS=${CFLAGS-"-4 -O"}
              LDSHARED=${LDSHARED-"cc"}
              RANLIB=${RANLIB-"true"}
-             AR_RC="cc -A" ;;
+             AR="cc"
+             ARFLAGS="-A" ;;
   SCO_SV\ 3.2*) SFLAGS=${CFLAGS-"-O3 -dy -KPIC "}
              CFLAGS=${CFLAGS-"-O3"}
              LDSHARED=${LDSHARED-"cc -dy -KPIC -G"} ;;
@@ -329,6 +336,20 @@ if test $zprefix -eq 1; then
   sed < zconf.h "/#ifdef Z_PREFIX.* may be/s/def Z_PREFIX\(.*\) may be/ 1\1 was/" > zconf.temp.h
   mv zconf.temp.h zconf.h
   echo "Using z_ prefix on all symbols."
+fi
+
+if test $solo -eq 1; then
+  sed '/#define ZCONF_H/a\
+#define Z_SOLO
+
+' < zconf.h > zconf.temp.h
+  mv zconf.temp.h zconf.h
+OBJC='$(OBJZ)'
+PIC_OBJC='$(PIC_OBJZ)'
+fi
+
+if test $cover -eq 1; then
+  CFLAGS="${CFLAGS} -fprofile-arcs -ftest-coverage"
 fi
 
 cat > $test.c <<EOF
@@ -564,7 +585,7 @@ case $CFLAGS in
     fi ;;
 esac
 
-rm -f $test.[co] $test $test$shared_ext
+rm -f $test.[co] $test $test$shared_ext $test.gcno
 
 # udpate Makefile
 sed < Makefile.in "
@@ -578,7 +599,8 @@ sed < Makefile.in "
 /^SHAREDLIB *=/s#=.*#=$SHAREDLIB#
 /^SHAREDLIBV *=/s#=.*#=$SHAREDLIBV#
 /^SHAREDLIBM *=/s#=.*#=$SHAREDLIBM#
-/^AR *=/s#=.*#=$AR_RC#
+/^AR *=/s#=.*#=$AR#
+/^ARFLAGS *=/s#=.*#=$ARFLAGS#
 /^RANLIB *=/s#=.*#=$RANLIB#
 /^LDCONFIG *=/s#=.*#=$LDCONFIG#
 /^LDSHAREDLIBC *=/s#=.*#=$LDSHAREDLIBC#
@@ -589,6 +611,8 @@ sed < Makefile.in "
 /^sharedlibdir *=/s#=.*#=$sharedlibdir#
 /^includedir *=/s#=.*#=$includedir#
 /^mandir *=/s#=.*#=$mandir#
+/^OBJC *=/s#=.*#= $OBJC#
+/^PIC_OBJC *=/s#=.*#= $PIC_OBJC#
 /^all: */s#:.*#: $ALL#
 /^test: */s#:.*#: $TEST#
 " > Makefile
@@ -602,7 +626,8 @@ sed < zlib.pc.in "
 /^SHAREDLIB *=/s#=.*#=$SHAREDLIB#
 /^SHAREDLIBV *=/s#=.*#=$SHAREDLIBV#
 /^SHAREDLIBM *=/s#=.*#=$SHAREDLIBM#
-/^AR *=/s#=.*#=$AR_RC#
+/^AR *=/s#=.*#=$AR#
+/^ARFLAGS *=/s#=.*#=$ARFLAGS#
 /^RANLIB *=/s#=.*#=$RANLIB#
 /^EXE *=/s#=.*#=$EXE#
 /^prefix *=/s#=.*#=$prefix#
