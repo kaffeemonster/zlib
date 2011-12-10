@@ -20,9 +20,9 @@ local inline unsigned long v2sub(unsigned long a, unsigned long b)
 {
     unsigned long r;
 #  ifdef __tilegx__
-    __asm__ ("v2sub	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r = __insn_v2sub(a, b);
 #  else
-    __asm__ ("subh	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r = __insn_subh(a, b);
 #  endif
     return r;
 }
@@ -32,9 +32,9 @@ local inline unsigned long v2cmpltu(unsigned long a, unsigned long b)
 {
     unsigned long r;
 #  ifdef __tilegx__
-    __asm__ ("v2cmpltu	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r =  __insn_v2cmpltu(a, b);
 #  else
-    __asm__ ("slth_u	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r = __insn_slth_u(a, b);
 #  endif
     return r;
 }
@@ -44,9 +44,9 @@ local inline unsigned long v2mz(unsigned long a, unsigned long b)
 {
     unsigned long r;
 #  ifdef __tilegx__
-    __asm__ ("v2mz	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r = __insn_v2mz(a, b);
 #  else
-    __asm__ ("mzh	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
+    r = __insn_mzh(a, b);
 #  endif
     return r;
 }
@@ -95,24 +95,12 @@ local void update_hoffset_m(Posf *p, uInt wsize, unsigned n)
             unsigned long m1 = ((unsigned long *)p)[0];
             unsigned long m2 = ((unsigned long *)p)[1];
             unsigned long mask1, mask2;
-            asm (
-#  ifdef __tilegx__
-                "{v2sub %2, %0, %4; v2cmpltu %0, %0, %4}\n\t"
-                "{v2sub %3, %1, %4; v2cmpltu %1, %1, %4}\n\t"
-                "{v2mz %0, %0, %2;  v2mz %1, %1, %3}\n\t"
-#  else
-                "{subh %2, %0, %4; slth_u %0, %0, %4}\n\t"
-                "{subh %3, %1, %4; slth_u %1, %1, %4}\n\t"
-                "{mzh %0, %0, %2;  mzh %1, %1, %3}\n\t"
-#  endif
-                : /* %0 */ "=r" (m1),
-                  /* %1 */ "=r" (m2),
-                  /* %2 */ "=&r" (mask1),
-                  /* %3 */ "=&r" (mask2)
-                : /* %4 */ "r" (vwsize),
-                  "0" (m1),
-                  "1" (m2)
-            );
+            mask1 = v2sub(m1, vwsize);
+            m1    = v2cmpltu(m1, vwsize);
+            mask2 = v2sub(m2, vwsize);
+            m2    = v2cmpltu(m2, vwsize);
+            m1    = v2mz(m1, mask1);
+            m2    = v2mz(m2, mask2);
             ((unsigned long *)p)[0] = m1;
             ((unsigned long *)p)[1] = m2;
             p += 2*(SOUL/sizeof(*p));
