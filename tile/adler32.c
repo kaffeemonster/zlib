@@ -20,40 +20,31 @@
 /* ========================================================================= */
 local inline unsigned long v1ddotpua(unsigned long d, unsigned long a, unsigned long b)
 {
-    __asm__ ("v1ddotpua	%0, %1, %2" : "=r" (d) : "r" (a), "r" (b), "0" (d));
-    return d;
+    return __insn_v1ddotpua(d, a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long v4shl(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("v4shl	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_v4shl(a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long v4shru(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("v4shru	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_v4shru(a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long v4sub(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("v4sub	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_v4sub(a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long v4add(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("v4add	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_v4add(a, b);
 }
 
 /* ========================================================================= */
@@ -156,24 +147,19 @@ local noinline uLong adler32_vec(adler, buf, len)
 /* ========================================================================= */
 local inline unsigned long sadab_u(unsigned long d, unsigned long a, unsigned long b)
 {
-    __asm__ ("sadab_u	%0, %1, %2" : "=r" (d) : "r" (a), "r" (b), "0" (d));
-    return d;
+    return __insn_sadab_u(d, a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long inthb(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("inthb	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_inthb(a, b);
 }
 
 /* ========================================================================= */
 local inline unsigned long intlb(unsigned long a, unsigned long b)
 {
-    unsigned long r;
-    __asm__ ("intlb	%0, %1, %2" : "=r" (r) : "r" (a), "r" (b));
-    return r;
+    return __insn_intlb(a, b);
 }
 
 /* ========================================================================= */
