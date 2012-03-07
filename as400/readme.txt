@@ -1,4 +1,4 @@
-        ZLIB version 1.2.5.2 for AS400 installation instructions
+        ZLIB version 1.2.7 for AS400 installation instructions
 
 I) From an AS400 *SAVF file:
 
@@ -8,7 +8,7 @@ On the AS400:
 
 _       Create the ZLIB AS400 library:
 
-        CRTLIB LIB(ZLIB) TYPE(PROD) TEXT('ZLIB compression API library')
+        CRTLIB LIB(ZLIB) TYPE(*PROD) TEXT('ZLIB compression API library')
 
 _       Create a work save file, for example:
 
@@ -52,7 +52,7 @@ II) From the original source distribution:
 
 1)      On the AS400, create the source library:
 
-        CRTLIB LIB(ZLIB) TYPE(PROD) TEXT('ZLIB compression API library')
+        CRTLIB LIB(ZLIB) TYPE(*PROD) TEXT('ZLIB compression API library')
 
 2)      Create the source files:
 

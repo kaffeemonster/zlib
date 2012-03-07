@@ -1,5 +1,5 @@
 /* deflate.c -- compress data using the deflation algorithm
- * Copyright (C) 1995-2011 Jean-loup Gailly and Mark Adler
+ * Copyright (C) 1995-2012 Jean-loup Gailly and Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
 
@@ -52,7 +52,7 @@
 #include "deflate.h"
 
 const char deflate_copyright[] =
-   " deflate 1.2.5.2 Copyright 1995-2011 Jean-loup Gailly and Mark Adler ";
+   " deflate 1.2.7 Copyright 1995-2012 Jean-loup Gailly and Mark Adler ";
 /*
   If you use the zlib library in a product, an acknowledgment is welcome
   in the documentation of your product. If for some reason you cannot
@@ -154,6 +154,9 @@ local const config configuration_table[10] = {
 #ifndef NO_DUMMY_DECL
 struct static_tree_desc_s {int dummy;}; /* for buggy compilers */
 #endif
+
+/* rank Z_BLOCK between Z_NO_FLUSH and Z_PARTIAL_FLUSH */
+#define RANK(f) (((f) << 1) - ((f) > 4 ? 9 : 0))
 
 /* ===========================================================================
  * Update a hash value with the given input byte
@@ -346,6 +349,7 @@ int ZEXPORT deflateSetDictionary (strm, dictionary, dictLength)
             CLEAR_HASH(s);
             s->strstart = 0;
             s->block_start = 0L;
+            s->insert = 0;
         }
         dictionary += dictLength - s->w_size;  /* use the tail */
         dictLength = s->w_size;
@@ -374,6 +378,7 @@ int ZEXPORT deflateSetDictionary (strm, dictionary, dictLength)
     }
     s->strstart += s->lookahead;
     s->block_start = (long)s->strstart;
+    s->insert = s->lookahead;
     s->lookahead = 0;
     s->match_length = s->prev_length = MIN_MATCH-1;
     s->match_available = 0;
@@ -448,8 +453,10 @@ int ZEXPORT deflatePending (strm, pending, bits)
     z_streamp strm;
 {
     if (strm == Z_NULL || strm->state == Z_NULL) return Z_STREAM_ERROR;
-    *pending = strm->state->pending;
-    *bits = strm->state->bi_valid;
+    if (pending != Z_NULL)
+        *pending = strm->state->pending;
+    if (bits != Z_NULL)
+        *bits = strm->state->bi_valid;
     return Z_OK;
 }
 
@@ -459,9 +466,23 @@ int ZEXPORT deflatePrime (strm, bits, value)
     int bits;
     int value;
 {
+    deflate_state *s;
+    int put;
+
     if (strm == Z_NULL || strm->state == Z_NULL) return Z_STREAM_ERROR;
-    strm->state->bi_valid = bits;
-    strm->state->bi_buf = (ush)(value & ((1 << bits) - 1));
+    s = strm->state;
+    if ((Bytef *)(s->d_buf) < s->pending_out + ((Buf_size + 7) >> 3))
+        return Z_BUF_ERROR;
+    do {
+        put = Buf_size - s->bi_valid;
+        if (put > bits)
+            put = bits;
+        s->bi_buf |= (ush)((value & ((1 << put) - 1)) << s->bi_valid);
+        s->bi_valid += put;
+        _tr_flush_bits(s);
+        value >>= put;
+        bits -= put;
+    } while (bits);
     return Z_OK;
 }
 
@@ -619,19 +640,22 @@ local void putShortMSB (s, b)
 local void flush_pending(strm)
     z_streamp strm;
 {
-    unsigned len = strm->state->pending;
+    unsigned len;
+    deflate_state *s = strm->state;
 
+    _tr_flush_bits(s);
+    len = s->pending;
     if (len > strm->avail_out) len = strm->avail_out;
     if (len == 0) return;
 
-    zmemcpy(strm->next_out, strm->state->pending_out, len);
+    zmemcpy(strm->next_out, s->pending_out, len);
     strm->next_out  += len;
-    strm->state->pending_out  += len;
+    s->pending_out  += len;
     strm->total_out += len;
     strm->avail_out  -= len;
-    strm->state->pending -= len;
-    if (strm->state->pending == 0) {
-        strm->state->pending_out = strm->state->pending_buf;
+    s->pending -= len;
+    if (s->pending == 0) {
+        s->pending_out = s->pending_buf;
     }
 }
 
@@ -858,7 +882,7 @@ int ZEXPORT deflate (strm, flush)
      * flushes. For repeated and useless calls with Z_FINISH, we keep
      * returning Z_STREAM_END instead of Z_BUF_ERROR.
      */
-    } else if (strm->avail_in == 0 && flush <= old_flush &&
+    } else if (strm->avail_in == 0 && RANK(flush) <= RANK(old_flush) &&
                flush != Z_FINISH) {
         ERR_RETURN(strm, Z_BUF_ERROR);
     }
@@ -907,6 +931,7 @@ int ZEXPORT deflate (strm, flush)
                     if (s->lookahead == 0) {
                         s->strstart = 0;
                         s->block_start = 0L;
+                        s->insert = 0;
                     }
                 }
             }
@@ -1093,6 +1118,7 @@ local void lm_init (s)
     s->strstart = 0;
     s->block_start = 0L;
     s->lookahead = 0;
+    s->insert = 0;
     s->match_length = s->prev_length = MIN_MATCH-1;
     s->match_available = 0;
     s->ins_h = 0;
@@ -1422,12 +1448,24 @@ local void fill_window(s)
         s->lookahead += n;
 
         /* Initialize the hash value now that we have some input: */
-        if (s->lookahead >= MIN_MATCH) {
-            s->ins_h = s->window[s->strstart];
-            UPDATE_HASH(s, s->ins_h, s->window[s->strstart+1]);
+        if (s->lookahead + s->insert >= MIN_MATCH) {
+            uInt str = s->strstart - s->insert;
+            s->ins_h = s->window[str];
+            UPDATE_HASH(s, s->ins_h, s->window[str + 1]);
 #if MIN_MATCH != 3
             Call UPDATE_HASH() MIN_MATCH-3 more times
 #endif
+            while (s->insert) {
+                UPDATE_HASH(s, s->ins_h, s->window[str + MIN_MATCH-1]);
+#ifndef FASTEST
+                s->prev[str & s->w_mask] = s->head[s->ins_h];
+#endif
+                s->head[s->ins_h] = (Pos)str;
+                str++;
+                s->insert--;
+                if (s->lookahead + s->insert < MIN_MATCH)
+                    break;
+            }
         }
         /* If the whole input has less than MIN_MATCH bytes, ins_h is garbage,
          * but this is not important since only literal bytes will be emitted.
@@ -1550,8 +1588,14 @@ local block_state deflate_stored(s, flush)
             FLUSH_BLOCK(s, 0);
         }
     }
-    FLUSH_BLOCK(s, flush == Z_FINISH);
-    return flush == Z_FINISH ? finish_done : block_done;
+    s->insert = 0;
+    if (flush == Z_FINISH) {
+        FLUSH_BLOCK(s, 1);
+        return finish_done;
+    }
+    if ((long)s->strstart > s->block_start)
+        FLUSH_BLOCK(s, 0);
+    return block_done;
 }
 
 /* ===========================================================================
@@ -1647,8 +1691,14 @@ local block_state deflate_fast(s, flush)
         }
         if (bflush) FLUSH_BLOCK(s, 0);
     }
-    FLUSH_BLOCK(s, flush == Z_FINISH);
-    return flush == Z_FINISH ? finish_done : block_done;
+    s->insert = s->strstart < MIN_MATCH-1 ? s->strstart : MIN_MATCH-1;
+    if (flush == Z_FINISH) {
+        FLUSH_BLOCK(s, 1);
+        return finish_done;
+    }
+    if (s->last_lit)
+        FLUSH_BLOCK(s, 0);
+    return block_done;
 }
 
 #ifndef FASTEST
@@ -1772,8 +1822,14 @@ local block_state deflate_slow(s, flush)
         _tr_tally_lit(s, s->window[s->strstart-1], bflush);
         s->match_available = 0;
     }
-    FLUSH_BLOCK(s, flush == Z_FINISH);
-    return flush == Z_FINISH ? finish_done : block_done;
+    s->insert = s->strstart < MIN_MATCH-1 ? s->strstart : MIN_MATCH-1;
+    if (flush == Z_FINISH) {
+        FLUSH_BLOCK(s, 1);
+        return finish_done;
+    }
+    if (s->last_lit)
+        FLUSH_BLOCK(s, 0);
+    return block_done;
 }
 #endif /* FASTEST */
 
@@ -1841,8 +1897,14 @@ local block_state deflate_rle(s, flush)
         }
         if (bflush) FLUSH_BLOCK(s, 0);
     }
-    FLUSH_BLOCK(s, flush == Z_FINISH);
-    return flush == Z_FINISH ? finish_done : block_done;
+    s->insert = 0;
+    if (flush == Z_FINISH) {
+        FLUSH_BLOCK(s, 1);
+        return finish_done;
+    }
+    if (s->last_lit)
+        FLUSH_BLOCK(s, 0);
+    return block_done;
 }
 
 /* ===========================================================================
@@ -1874,6 +1936,12 @@ local block_state deflate_huff(s, flush)
         s->strstart++;
         if (bflush) FLUSH_BLOCK(s, 0);
     }
-    FLUSH_BLOCK(s, flush == Z_FINISH);
-    return flush == Z_FINISH ? finish_done : block_done;
+    s->insert = 0;
+    if (flush == Z_FINISH) {
+        FLUSH_BLOCK(s, 1);
+        return finish_done;
+    }
+    if (s->last_lit)
+        FLUSH_BLOCK(s, 0);
+    return block_done;
 }

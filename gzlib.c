@@ -5,7 +5,7 @@
 
 #include "gzguts.h"
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(__BORLANDC__)
 #  define LSEEK _lseeki64
 #else
 #if defined(_LARGEFILE64_SOURCE) && _LFS64_LARGEFILE-0
@@ -78,6 +78,7 @@ local void gz_reset(state)
     state->x.have = 0;              /* no output data available */
     if (state->mode == GZ_READ) {   /* for reading ... */
         state->eof = 0;             /* not at end of file */
+        state->past = 0;            /* have not read past end yet */
         state->how = LOOK;          /* look for gzip header */
     }
     state->seek = 0;                /* no seek request pending */
@@ -93,6 +94,7 @@ local gzFile gz_open(path, fd, mode)
     const char *mode;
 {
     gz_statep state;
+    int cloexec = 0, exclusive = 0;
 
     /* check input */
     if (path == NULL)
@@ -131,6 +133,12 @@ local gzFile gz_open(path, fd, mode)
                 free(state);
                 return NULL;
             case 'b':       /* ignore -- will request binary anyway */
+                break;
+            case 'e':
+                cloexec = 1;
+                break;
+            case 'x':
+                exclusive = 1;
                 break;
             case 'f':
                 state->strategy = Z_FILTERED;
@@ -183,12 +191,18 @@ local gzFile gz_open(path, fd, mode)
 #ifdef O_BINARY
             O_BINARY |
 #endif
+#ifdef O_CLOEXEC
+            (cloexec ? O_CLOEXEC : 0) |
+#endif
             (state->mode == GZ_READ ?
                 O_RDONLY :
-                (O_WRONLY | O_CREAT | (
-                    state->mode == GZ_WRITE ?
-                        O_TRUNC :
-                        O_APPEND))),
+                (O_WRONLY | O_CREAT |
+#ifdef O_EXCL
+                 (exclusive ? O_EXCL : 0) |
+#endif
+                 (state->mode == GZ_WRITE ?
+                    O_TRUNC :
+                    O_APPEND))),
             0666);
     if (state->fd == -1) {
         free(state->path);
@@ -331,6 +345,7 @@ z_off64_t ZEXPORT gzseek64(file, offset, whence)
             return -1;
         state->x.have = 0;
         state->eof = 0;
+        state->past = 0;
         state->seek = 0;
         gz_error(state, Z_OK, NULL);
         state->strm.avail_in = 0;
@@ -453,8 +468,7 @@ int ZEXPORT gzeof(file)
         return 0;
 
     /* return end-of-file state */
-    return state->mode == GZ_READ ?
-        (state->eof && state->strm.avail_in == 0 && state->x.have == 0) : 0;
+    return state->mode == GZ_READ ? state->past : 0;
 }
 
 /* -- see zlib.h -- */
@@ -491,8 +505,10 @@ void ZEXPORT gzclearerr(file)
         return;
 
     /* clear error and end-of-file */
-    if (state->mode == GZ_READ)
+    if (state->mode == GZ_READ) {
         state->eof = 0;
+        state->past = 0;
+    }
     gz_error(state, Z_OK, NULL);
 }
 

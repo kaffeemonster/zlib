@@ -1,13 +1,22 @@
 lib_LTLIBRARIES = libminizip.la
 
+if COND_DEMOS
+bin_PROGRAMS = miniunzip minizip
+endif
+
+zlib_top_srcdir = $(top_srcdir)/../..
+zlib_top_builddir = $(top_builddir)/../..
+
+AM_CPPFLAGS = -I$(zlib_top_srcdir)
+AM_LDFLAGS = -L$(zlib_top_builddir)
+
 libminizip_la_SOURCES = \
 	ioapi.c \
 	mztools.c \
 	unzip.c \
 	zip.c
 
-libminizip_la_CFLAGS = -I../.. -L../..
-libminizip_la_LDFLAGS = -version-info 1:0:0 -lz
+libminizip_la_LDFLAGS = $(AM_LDFLAGS) -version-info 1:0:0 -lz
 
 minizip_includedir = $(includedir)/minizip
 minizip_include_HEADERS = \
@@ -26,3 +35,4 @@ miniunzip_SOURCES = miniunz.c
 miniunzip_LDADD = libminizip.la
 
 minizip_SOURCES = minizip.c
+minizip_LDADD = libminizip.la -lz

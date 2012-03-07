@@ -1,7 +1,7 @@
 LIBRARY
 ; zlib data compression and ZIP file I/O library
 
-VERSION		1.24
+VERSION		1.2.7
 
 EXPORTS
         adler32                                  @1
@@ -33,6 +33,7 @@ EXPORTS
         zlibVersion                              @27
         gzprintf                                 @28
         gzputc                                   @29
+        gzgetc                                   @30
         gzseek                                   @31
         gzrewind                                 @32
         gztell                                   @33
@@ -130,7 +131,7 @@ EXPORTS
         inflateUndermine                        @160
 
 ; zlib1 v1.2.6 added:
-        gzgetc_                                 @30
+        gzgetc_                                 @161
         gzflags                                 @162
         inflateResetKeep                        @163
 	deflateResetKeep			@164
